@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Silly Twitch Demo</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            html, body { font-family: "Amazon Ember", "Helvetica", "sans-serif"; margin: 0; }
+            a { color: #FF9900; }
+            h1 { font-weight: 300; }
+            .app { width: 100%; }
+            .app-header { color: white; text-align: center; background: linear-gradient(30deg, #f90 55%, #FFC300); width: 100%; margin: 0 0 1em 0; padding: 3em 0 3em 0; box-shadow: 1px 2px 4px rgba(0, 0, 0, .3); }
+            .app-logo { width: 126px; margin: 0 auto; }
+            .app-body { width: 400px; margin: 0 auto; text-align: center; }
+            #app-canvas { width: 400px; height: 400px; border:1px solid #000000; user-select: none;}
+        </style>
+    </head>
+    <body>
+        <div class="app">
+            <div class="app-header">
+                <div class="app-logo">
+                    <img src="https://aws-amplify.github.io/images/Logos/Amplify-Logo-White.svg" alt="AWS Amplify" />
+                </div>
+                <h1>Silly Twitch Demo</h1>
+            </div>
+            <div class="app-body">
+                <canvas id="app-canvas">
+                </canvas>
+            </div>
+        </div>
+        <script src="main.bundle.js"></script>
+    </body>
+</html>
