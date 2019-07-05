@@ -394,15 +394,19 @@ Resources:
             - HEAD
             - OPTIONS
           ForwardedValues:
-              QueryString: 'false'
+              QueryString: false
           ViewerProtocolPolicy: redirect-to-https
-        IPV6Enabled: 'true'
+        IPV6Enabled: true
         ViewerCertificate:
-            CloudFrontDefaultCertificate: 'true'
-        Enabled: 'true'
+            CloudFrontDefaultCertificate: true
+        Enabled: true
         HttpVersion: 'http2'
 
 Outputs:
+  AWSS3Command:
+    Description: Command to run from git repo
+    Value: !Sub |
+      npm install && npm run build && aws s3 sync dist/ s3://${WebsiteBucket}/
   DemoBaseURL:
     Description: Demo is hosted here
     Value: !Sub 'https://${WebsiteDistribution.DomainName}/index.html'
