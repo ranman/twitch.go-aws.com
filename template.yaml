@@ -1,0 +1,423 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Deploys an APIGW Kinesis Proxy
+Resources:
+  # Kinesis Streams
+  ClickStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+
+  HotSpotStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+
+  # Kinesis Analytics App
+  KinesisAnalyticsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - kinesisanalytics.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: kinesisaccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadInputKinesis
+                Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                  - kinesis:GetShardIterator
+                  - kinesis:GetRecords
+                Resource:
+                  - !GetAtt ClickStream.Arn
+              - Sid: WriteOutputKinesis
+                Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                  - kinesis:DescribeStream
+                Resource:
+                  - !GetAtt 'HotSpotStream.Arn'
+
+  KinesisAnalyticsApp:
+    Type: AWS::KinesisAnalytics::Application
+    Properties:
+      ApplicationName: !Sub '${AWS::StackName}-HotSpotApp'
+      ApplicationDescription: finds hotspots in one kinesis stream and outputs them to another
+      ApplicationCode: |
+        CREATE OR REPLACE STREAM "DESTINATION_SQL_STREAM" (
+            HOTSPOTS_RESULT VARCHAR(10000)
+        ); 
+        CREATE OR REPLACE PUMP "STREAM_PUMP" AS INSERT INTO "DESTINATION_SQL_STREAM" 
+            SELECT "HOTSPOTS_RESULT" FROM TABLE(
+                HOTSPOTS(
+                    CURSOR(SELECT STREAM "x", "y" FROM "SOURCE_SQL_STREAM_001"),
+                    100, -- windowSize
+                    10.0, -- hotspot size
+                    50 -- min number of points
+                )) WHERE "HOTSPOTS_RESULT" <> '{"hotspots":[]}';
+
+      Inputs:
+        - NamePrefix: SOURCE_SQL_STREAM
+          KinesisStreamsInput:
+            ResourceARN: !GetAtt 'ClickStream.Arn'
+            RoleARN: !GetAtt 'KinesisAnalyticsRole.Arn'
+          InputSchema:
+            RecordColumns:
+              - Name: 'x'
+                SqlType: INTEGER
+                Mapping: $.x
+              - Name: 'y'
+                SqlType: INTEGER
+                Mapping: $.y
+            RecordFormat:
+              RecordFormatType: JSON
+              MappingParameters:
+                JSONMappingParameters:
+                  RecordRowPath: $
+
+  KinesisAnalyticsAppHotSpotOutput:
+    Type: AWS::KinesisAnalytics::ApplicationOutput
+    Properties:
+      ApplicationName: !Ref KinesisAnalyticsApp
+      Output:
+        DestinationSchema:
+          RecordFormatType: JSON
+        KinesisStreamsOutput:
+          ResourceARN: !GetAtt HotSpotStream.Arn
+          RoleARN: !GetAtt KinesisAnalyticsRole.Arn
+        Name: DESTINATION_SQL_STREAM
+
+  # APIGW Kinesis Proxy
+  APIGWRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: KinesisReadWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadOutputStream
+                Effect: Allow
+                Action:
+                  - kinesis:GetShardIterator
+                  - kinesis:GetRecords
+                  - kinesis:DescribeStream
+                  - kinesis:ListShards
+                Resource: 
+                  - !GetAtt 'HotSpotStream.Arn'
+              - Sid: WriteInputStream
+                Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                Resource:
+                  - !GetAtt 'ClickStream.Arn'
+
+  KinesisAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors: "'*'"
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          title: !Sub '${AWS::StackName}-kinesis'
+        schemes:
+        - "https"
+        paths:
+          /streams/{stream-name}:
+            get:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              parameters:
+              - name: "stream-name"
+                in: "path"
+                required: true
+                type: "string"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt 'APIGWRole.Arn'
+                uri: "arn:aws:apigateway:us-east-1:kinesis:action/DescribeStream"
+                responses:
+                  default:
+                    statusCode: "200"
+                requestParameters:
+                  integration.request.header.Content-Type: "'x-amz-json-1.1'"
+                passthroughBehavior: "when_no_templates"
+                httpMethod: "POST"
+                requestTemplates:
+                  application/json: "{\n  \"StreamName\": \"$input.params('stream-name')\"\n}"
+                type: "aws"
+          /streams/{stream-name}/record:
+            get:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              parameters:
+              - name: "stream-name"
+                in: "path"
+                required: true
+                type: "string"
+              - name: "Shard-Iterator"
+                in: "header"
+                required: true
+                type: "string"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt 'APIGWRole.Arn'
+                uri: "arn:aws:apigateway:us-east-1:kinesis:action/GetRecords"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                requestParameters:
+                  integration.request.header.Content-Type: "'x-amz-json-1.1'"
+                passthroughBehavior: "when_no_templates"
+                httpMethod: "POST"
+                requestTemplates:
+                  application/json: "{\n    \"ShardIterator\": \"$input.params('Shard-Iterator')\" \n}"
+                type: "aws"
+            put:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              parameters:
+              - name: "stream-name"
+                in: "path"
+                required: true
+                type: "string"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt 'APIGWRole.Arn'
+                uri: "arn:aws:apigateway:us-east-1:kinesis:action/PutRecord"
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                requestParameters:
+                  integration.request.header.Content-Type: "'application/x-amz-json-1.1'"
+                passthroughBehavior: "when_no_templates"
+                httpMethod: "POST"
+                requestTemplates:
+                  application/json: "{\n    \"StreamName\": \"$input.params('stream-name')\"\
+                    ,\n    \"Data\": \"$util.base64Encode($input.body)\",\n    \"PartitionKey\"\
+                    : \"clickstream\"\n}"
+                type: "aws"
+            options:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,PUT'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: "when_no_match"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                type: "mock"
+          /streams/{stream-name}/sharditerator:
+            get:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              parameters:
+              - name: "stream-name"
+                in: "path"
+                required: true
+                type: "string"
+              - name: "shard-id"
+                in: "query"
+                required: false
+                type: "string"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt 'APIGWRole.Arn'
+                uri: "arn:aws:apigateway:us-east-1:kinesis:action/GetShardIterator"
+                responses:
+                  default:
+                    statusCode: "200"
+                requestParameters:
+                  integration.request.header.Content-Type: "'x-amz-json-1.1'"
+                passthroughBehavior: "when_no_templates"
+                httpMethod: "POST"
+                requestTemplates:
+                  application/json: "{\n    \"StreamName\": \"$input.params('stream-name')\"\
+                    ,\n    \"ShardIteratorType\": \"TRIM_HORIZON\",\n    \"ShardId\": \"$input.params('shard-id')\"\
+                    \n}"
+                type: "aws"
+            options:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: "when_no_match"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                type: "mock"
+        definitions:
+          Empty:
+            type: "object"
+            title: "Empty Schema"
+
+  # S3 Bucket and Website
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource:
+              - !Sub '${WebsiteBucket.Arn}/*'
+            Principal:
+              CanonicalUser: !GetAtt WebsiteOriginAccessIdentity.S3CanonicalUserId
+
+  WebsiteOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "access-identity-${WebsiteBucket}"
+
+  WebsiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: "Website distribution for solution"
+        Origins:
+          - Id: S3-solution-website
+            DomainName: !Sub "${WebsiteBucket}.s3.${AWS::Region}.amazonaws.com"
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${WebsiteOriginAccessIdentity}"
+        DefaultCacheBehavior:
+          TargetOriginId: S3-solution-website
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          ForwardedValues:
+              QueryString: 'false'
+          ViewerProtocolPolicy: redirect-to-https
+        IPV6Enabled: 'true'
+        ViewerCertificate:
+            CloudFrontDefaultCertificate: 'true'
+        Enabled: 'true'
+        HttpVersion: 'http2'
+
+Outputs:
+  DemoBaseURL:
+    Description: Demo is hosted here
+    Value: !Sub 'https://${WebsiteDistribution.DomainName}/index.html'
+  APIBaseURL:
+    Description: APIGW Base URL
+    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/'
+  PutRecordURL:
+    Description: URL for putting records
+    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/${ClickStream}/record'
+  ShardIteratorURL:
+    Description: URL for shard iterator
+    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/${HotSpotStream}/sharditerator'
+  GetHotSpotsURL:
+    Description: URL for getting records
+    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/${HotSpotStream}/record'
+  StartApplicationURL:
+    Description: Go here and click start
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/kinesisanalytics/home#/wizard/editor?applicationName=${KinesisAnalyticsApp}'
