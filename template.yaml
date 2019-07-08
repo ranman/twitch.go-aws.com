@@ -146,6 +146,7 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: prod
+      EndpointConfiguration: REGIONAL
       Cors: "'*'"
       DefinitionBody:
         swagger: "2.0"
@@ -170,12 +171,17 @@ Resources:
                   description: "200 response"
                   schema:
                     $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
               x-amazon-apigateway-integration:
                 credentials: !GetAtt 'APIGWRole.Arn'
-                uri: "arn:aws:apigateway:us-east-1:kinesis:action/DescribeStream"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:kinesis:action/DescribeStream"
                 responses:
                   default:
                     statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
                 requestParameters:
                   integration.request.header.Content-Type: "'x-amz-json-1.1'"
                 passthroughBehavior: "when_no_templates"
@@ -183,6 +189,35 @@ Resources:
                 requestTemplates:
                   application/json: "{\n  \"StreamName\": \"$input.params('stream-name')\"\n}"
                 type: "aws"
+            options:
+              consumes:
+              - "application/json"
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: "when_no_match"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                type: "mock"
           /streams/{stream-name}/record:
             get:
               consumes:
@@ -208,7 +243,7 @@ Resources:
                       type: "string"
               x-amazon-apigateway-integration:
                 credentials: !GetAtt 'APIGWRole.Arn'
-                uri: "arn:aws:apigateway:us-east-1:kinesis:action/GetRecords"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:kinesis:action/GetRecords"
                 responses:
                   default:
                     statusCode: "200"
@@ -241,7 +276,7 @@ Resources:
                       type: "string"
               x-amazon-apigateway-integration:
                 credentials: !GetAtt 'APIGWRole.Arn'
-                uri: "arn:aws:apigateway:us-east-1:kinesis:action/PutRecord"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:kinesis:action/PutRecord"
                 responses:
                   default:
                     statusCode: "200"
@@ -305,19 +340,24 @@ Resources:
                   description: "200 response"
                   schema:
                     $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
               x-amazon-apigateway-integration:
                 credentials: !GetAtt 'APIGWRole.Arn'
-                uri: "arn:aws:apigateway:us-east-1:kinesis:action/GetShardIterator"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:kinesis:action/GetShardIterator"
                 responses:
                   default:
                     statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
                 requestParameters:
                   integration.request.header.Content-Type: "'x-amz-json-1.1'"
                 passthroughBehavior: "when_no_templates"
                 httpMethod: "POST"
                 requestTemplates:
                   application/json: "{\n    \"StreamName\": \"$input.params('stream-name')\"\
-                    ,\n    \"ShardIteratorType\": \"TRIM_HORIZON\",\n    \"ShardId\": \"$input.params('shard-id')\"\
+                    ,\n    \"ShardIteratorType\": \"LATEST\",\n    \"ShardId\": \"$input.params('shard-id')\"\
                     \n}"
                 type: "aws"
             options:
