@@ -2,7 +2,7 @@
 
 This is a silly demo we created on twitch.tv/aws to show what you can do with [Amazon API Gateway](https://aws.amazon.com/api-gateway/) as a service proxy. No lambda functions were harmed, or even used, when making this demo.
 
-![example application image](https://raw.githubusercontent.com/ranman/twitch.go-aws.como/master/imgs/example.png)
+![example application image](https://raw.githubusercontent.com/ranman/twitch.go-aws.com/master/imgs/example.png)
 
 ## Launch your own
 
