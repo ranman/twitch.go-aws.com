@@ -1,6 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Deploys an APIGW Kinesis Proxy
+
+Parameters:
+  CreateWebsite:
+    Description: whether the template should make the website bucket and dist
+    Default: false
+    Type: String
+    AllowedValues: [true, false]
+
+Conditions:
+  ShouldCreateWebsite: !Equals [!Ref CreateWebsite, true]
+
 Resources:
   # Kinesis Streams
   ClickStream:
@@ -346,10 +357,12 @@ Resources:
   # S3 Bucket and Website
   WebsiteBucket:
     Type: AWS::S3::Bucket
+    Condition: ShouldCreateWebsite
     DeletionPolicy: Retain
 
   WebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: ShouldCreateWebsite
     Properties:
       Bucket: !Ref WebsiteBucket
       PolicyDocument:
@@ -365,12 +378,14 @@ Resources:
 
   WebsiteOriginAccessIdentity:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Condition: ShouldCreateWebsite
     Properties:
       CloudFrontOriginAccessIdentityConfig:
         Comment: !Sub "access-identity-${WebsiteBucket}"
 
   WebsiteDistribution:
     Type: AWS::CloudFront::Distribution
+    Condition: ShouldCreateWebsite
     Properties:
       DistributionConfig:
         Comment: "Website distribution for solution"
@@ -403,25 +418,24 @@ Resources:
         HttpVersion: 'http2'
 
 Outputs:
+  StartApplicationURL:
+    Description: Go here and click start - do this first
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/kinesisanalytics/home#/wizard/editor?applicationName=${KinesisAnalyticsApp}'
   AWSS3Command:
     Description: Command to run from git repo
+    Condition: ShouldCreateWebsite
     Value: !Sub |
       npm install && npm run build && aws s3 sync dist/ s3://${WebsiteBucket}/
   DemoBaseURL:
     Description: Demo is hosted here
+    Condition: ShouldCreateWebsite
     Value: !Sub 'https://${WebsiteDistribution.DomainName}/index.html'
   APIBaseURL:
     Description: APIGW Base URL
     Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/'
-  PutRecordURL:
+  ClickStream:
     Description: URL for putting records
-    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/${ClickStream}/record'
-  ShardIteratorURL:
+    Value: !Ref ClickStream
+  HotspotStream:
     Description: URL for shard iterator
-    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/${HotSpotStream}/sharditerator'
-  GetHotSpotsURL:
-    Description: URL for getting records
-    Value: !Sub 'https://${KinesisAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/streams/${HotSpotStream}/record'
-  StartApplicationURL:
-    Description: Go here and click start
-    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/kinesisanalytics/home#/wizard/editor?applicationName=${KinesisAnalyticsApp}'
+    Value: !Ref HotSpotStream
