@@ -73,8 +73,8 @@ Resources:
                 HOTSPOTS(
                     CURSOR(SELECT STREAM "x", "y" FROM "SOURCE_SQL_STREAM_001"),
                     100, -- windowSize
-                    10.0, -- hotspot size
-                    50 -- min number of points
+                    100, -- hotspot size
+                    20 -- min number of points
                 )) WHERE "HOTSPOTS_RESULT" <> '{"hotspots":[]}';
 
       Inputs:
