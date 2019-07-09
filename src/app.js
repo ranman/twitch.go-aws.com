@@ -12,31 +12,33 @@ const hostpotIteratorURL = new URL(
 const hotspotRecordsURL = new URL(APIBaseURL + hotspotStream + "/record");
 const hotspotURL = new URL(APIBaseURL + hotspotStream + "/");
 
-var shards = new Map();
+const shards = new Map();
 
 async function getShards() {
   const response = await fetch(hotspotURL);
   const json = await response.json();
-  /* this could be promises.all if I rewrote it but I suck at javascript */
-  json.StreamDescription.Shards.forEach(async element => {
-    shards.set(element.ShardId, await getShardIterator(element.ShardId));
+  
+  const shardPromises = json.StreamDescription.Shards.map(getShardIterator);
+  const shardsValues = await Promise.all(shardPromises);
+  
+  shardsValues.forEach(({ shard, iterator }) => {
+    shards.set(shard, iterator);
   });
 }
 
-async function getShardIterator(shard) {
+async function getShardIterator({ ShardId }) {
   const response = await fetch(
-    hostpotIteratorURL + "?shard-id=" + encodeURIComponent(shard)
+    hostpotIteratorURL + "?shard-id=" + encodeURIComponent(ShardId)
   );
-  const json = await response.json();
-  return json.ShardIterator;
+  const { ShardIterator } = await response.json();
+  return { shard: ShardId, iterator: ShardIterator };
 }
 
 async function getHotspots(iterator) {
   const response = await fetch(hotspotRecordsURL, {
     headers: new Headers({ "Shard-Iterator": iterator })
   });
-  const json = await response.json();
-  return json;
+  return response.json();
 }
 
 async function paintHotspots(hotspots) {
@@ -62,11 +64,10 @@ async function recordClickEvent(canvas, event) {
   const rect = canvas.getBoundingClientRect();
   const x = Math.floor(event.clientX - rect.left);
   const y = Math.floor(event.clientY - rect.top);
-  console.log(x, y);
   const response = await fetch(clickstreamURL, {
     headers: new Headers({ "Content-Type": "application/json" }),
     method: "PUT",
-    body: JSON.stringify({ x: x, y: y })
+    body: JSON.stringify({ x, y, })
   });
 }
 
@@ -105,9 +106,9 @@ setInterval(async () => {
   shards.forEach(async (value, key, map) => {
     const hotspotsData = await getHotspots(value);
     hotspotsData.Records.forEach(async record => {
+      /* are these two JSON.parses strictly necessary? */
       const hotspots = JSON.parse(JSON.parse(atob(record.Data)).HOTSPOTS_RESULT)
         .hotspots;
-      console.log(hotspots);
       await paintHotspots(hotspots);
     });
   });
