@@ -28,7 +28,7 @@ async function getShards() {
 
 async function getShardIterator({ ShardId }) {
   const response = await fetch(
-    hostpotIteratorURL + "?shard-id=" + encodeURIComponent(shard)
+    hostpotIteratorURL + "?shard-id=" + encodeURIComponent(ShardId)
   );
   const { ShardIterator } = await response.json();
   return { shard: ShardId, iterator: ShardIterator };
